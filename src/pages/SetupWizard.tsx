@@ -123,6 +123,27 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
     }
   };
 
+  const handleCreatorMode = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch('/api/setup/creator-mode', {
+        method: 'POST',
+      });
+      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to activate creator mode');
+      
+      setStep(3);
+      setTimeout(() => {
+        onComplete();
+      }, 1500);
+    } catch (err: any) {
+      setError(err.message);
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-zinc-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
@@ -137,6 +158,17 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
         <p className="mt-2 text-center text-sm text-zinc-500">
           Configure your environment to get started.
         </p>
+        
+        <div className="mt-4 flex justify-center">
+          <button
+            onClick={handleCreatorMode}
+            disabled={loading}
+            className="inline-flex items-center px-4 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-zinc-900"
+          >
+            {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+            Creators Login (Bypass Setup)
+          </button>
+        </div>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-xl">

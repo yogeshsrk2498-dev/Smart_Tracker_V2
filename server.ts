@@ -1,9 +1,10 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import { isSystemConfigured, getConfigDB, setSetting, getSetting } from "./src/server/db_config.js";
-import { initExternalDB, runExternalMigrations } from "./src/server/external_db.js";
+import { initExternalDB, runExternalMigrations, getExternalDB } from "./src/server/external_db.js";
 import { encrypt, decrypt } from "./src/server/crypto.js";
 import bcrypt from "bcrypt";
+import apiRoutes from "./src/server/routes.js";
 
 async function startServer() {
   const app = express();
@@ -30,6 +31,32 @@ async function startServer() {
     // If configured, proceed to the requested route
     next();
   });
+
+  // Middleware: Attach dynamic DB connection to req.db
+  app.use("/api", async (req, res, next) => {
+    // Skip for setup, health, and proxy routes
+    if (req.path.startsWith("/setup") || req.path === "/health" || req.path.startsWith("/proxy")) {
+      return next();
+    }
+
+    try {
+      let db;
+      try {
+        db = getExternalDB();
+      } catch (e) {
+        // Not initialized yet, try to initialize
+        db = await initExternalDB();
+      }
+      (req as any).db = db;
+      next();
+    } catch (error) {
+      console.error("Failed to attach DB to request:", error);
+      res.status(500).json({ error: "Database connection failed." });
+    }
+  });
+
+  // Mount the business logic routes
+  app.use("/api", apiRoutes);
 
   // API routes FIRST
   app.get("/api/health", (req, res) => {
@@ -101,6 +128,56 @@ async function startServer() {
     }
   });
 
+  // POST /api/setup/creator-mode
+  // Temporary endpoint to bypass setup and use dummy data
+  app.post("/api/setup/creator-mode", async (req, res) => {
+    try {
+      const db = getConfigDB();
+      
+      // 1. Create dummy admin if it doesn't exist
+      const adminCount = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").get() as { count: number };
+      if (adminCount.count === 0) {
+        const passwordHash = await bcrypt.hash('creator', 10);
+        db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'admin')").run('creator', passwordHash);
+      }
+
+      // 2. Configure local SQLite as the "external" database
+      const dummyConfig = {
+        client: 'sqlite3',
+        connection: {
+          filename: './dummy_data.db'
+        }
+      };
+      const encryptedConfig = encrypt(JSON.stringify(dummyConfig));
+      setSetting("external_db_config", encryptedConfig);
+
+      // 3. Initialize and migrate
+      const dbInstance = await initExternalDB();
+      await runExternalMigrations(dbInstance);
+
+      // 4. Seed dummy data if empty
+      const empCount = await dbInstance('employees').count('* as count').first();
+      if (empCount && Number(empCount.count) === 0) {
+        await dbInstance('employees').insert([
+          { id: 'emp_1', name: 'Alice Smith', role: 'Developer', hourlyRate: 50.00, allocation: 100, billability: 'Yes', availability: 40 },
+          { id: 'emp_2', name: 'Bob Jones', role: 'Designer', hourlyRate: 60.00, allocation: 100, billability: 'Yes', availability: 40 },
+        ]);
+        await dbInstance('projects').insert([
+          { id: 'proj_1', name: 'Website Redesign', owner: 'Alice Smith', hourlyRate: 100.00, allocation: 100, billability: 'Yes', type: 'External', customer: 'Acme Corp' },
+        ]);
+        await dbInstance('allocations').insert([
+          { id: 'alloc_1', employeeId: 'emp_1', projectId: 'proj_1', startDate: '2026-03-01', endDate: '2026-06-01', allocationPercentage: 50, type: 'Billable' },
+          { id: 'alloc_2', employeeId: 'emp_2', projectId: 'proj_1', startDate: '2026-03-01', endDate: '2026-06-01', allocationPercentage: 50, type: 'Billable' },
+        ]);
+      }
+
+      res.status(200).json({ message: "Creator mode activated successfully." });
+    } catch (error) {
+      console.error("Error activating creator mode:", error);
+      res.status(500).json({ error: "Failed to activate creator mode." });
+    }
+  });
+
   // POST /api/setup/apikeys
   // Stores external API keys securely in the local SQLite DB
   app.post("/api/setup/apikeys", (req, res) => {
@@ -126,41 +203,7 @@ async function startServer() {
     }
   });
 
-  // --- Main App Routes (Protected by Middleware) ---
-  
-  // Example: GET /api/employees
-  app.get("/api/employees", async (req, res) => {
-    try {
-      const db = await initExternalDB(); // Ensure it's initialized
-      const employees = await db('employees').select('*');
-      res.json(employees);
-    } catch (error) {
-      console.error("Error fetching employees:", error);
-      res.status(500).json({ error: "Failed to fetch employees." });
-    }
-  });
-
   // --- API Gateway / Proxy Routes ---
-
-  // External Database Generic Proxy (Read-only example)
-  app.get("/api/db/:table", async (req, res) => {
-    try {
-      const { table } = req.params;
-      const db = await initExternalDB();
-      
-      // Basic validation to prevent arbitrary SQL execution
-      const allowedTables = ['employees', 'customers', 'orders', 'products'];
-      if (!allowedTables.includes(table)) {
-        return res.status(400).json({ error: "Invalid table name." });
-      }
-
-      const data = await db(table).select('*').limit(100);
-      res.json(data);
-    } catch (error) {
-      console.error(`Error fetching from ${req.params.table}:`, error);
-      res.status(500).json({ error: `Failed to fetch from ${req.params.table}.` });
-    }
-  });
 
   // OpenAI Proxy
   app.post("/api/proxy/openai/chat", async (req, res) => {

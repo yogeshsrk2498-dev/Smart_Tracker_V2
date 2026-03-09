@@ -48,40 +48,48 @@ export function getExternalDB(): Knex {
 
 // Run migrations on the external database
 export async function runExternalMigrations(dbInstance: Knex) {
-  // Example migrations for business tables
+  // Employees Table
   const hasEmployees = await dbInstance.schema.hasTable('employees');
   if (!hasEmployees) {
     await dbInstance.schema.createTable('employees', (table) => {
-      table.increments('id').primary();
+      table.string('id').primary();
       table.string('name').notNullable();
-      table.string('email').notNullable().unique();
-      table.string('department');
+      table.string('role').notNullable();
+      table.decimal('hourlyRate', 10, 2).notNullable();
+      table.integer('allocation').notNullable();
+      table.enum('billability', ['Yes', 'No']).notNullable();
+      table.integer('availability').notNullable();
       table.timestamps(true, true);
     });
   }
 
+  // Projects Table
   const hasProjects = await dbInstance.schema.hasTable('projects');
   if (!hasProjects) {
     await dbInstance.schema.createTable('projects', (table) => {
-      table.increments('id').primary();
+      table.string('id').primary();
       table.string('name').notNullable();
-      table.text('description');
-      table.date('start_date');
-      table.date('end_date');
-      table.string('status').defaultTo('active');
+      table.string('owner').notNullable();
+      table.decimal('hourlyRate', 10, 2).notNullable();
+      table.integer('allocation').notNullable();
+      table.enum('billability', ['Yes', 'No']).notNullable();
+      table.enum('type', ['External', 'Internal']).notNullable();
+      table.string('customer').nullable();
       table.timestamps(true, true);
     });
   }
 
+  // Allocations Table
   const hasAllocations = await dbInstance.schema.hasTable('allocations');
   if (!hasAllocations) {
     await dbInstance.schema.createTable('allocations', (table) => {
-      table.increments('id').primary();
-      table.integer('employee_id').unsigned().references('id').inTable('employees').onDelete('CASCADE');
-      table.integer('project_id').unsigned().references('id').inTable('projects').onDelete('CASCADE');
-      table.integer('hours_per_week').notNullable();
-      table.date('start_date');
-      table.date('end_date');
+      table.string('id').primary();
+      table.string('employeeId').notNullable().references('id').inTable('employees').onDelete('CASCADE');
+      table.string('projectId').notNullable().references('id').inTable('projects').onDelete('CASCADE');
+      table.date('startDate').notNullable();
+      table.date('endDate').notNullable();
+      table.integer('allocationPercentage').notNullable();
+      table.enum('type', ['Billable', 'Non-billable']).notNullable();
       table.timestamps(true, true);
     });
   }
